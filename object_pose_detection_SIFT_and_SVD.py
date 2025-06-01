@@ -1,9 +1,7 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Circle, Polygon
-from scipy.spatial.transform import Rotation as R
-import random
+from mpl_toolkits.mplot3d import Axes3D
 
 class Scene3DVisualizer:
     def __init__(self, width=800, height=600):
@@ -34,14 +32,10 @@ class Scene3DVisualizer:
         
         # Object definitions with (x, y, size, depth, color, shape, fill)
         objects_data = [
-            # Blue square (hollow)
-            {'center': (200, 150), 'size': 70, 'depth': 0.2, 'color': [220, 10, 20], 'shape': 'square', 'fill': False},
-            # Pink square (hollow)
-            {'center': (500, 450), 'size': 85, 'depth': 0.4, 'color': [255, 0, 255], 'shape': 'square', 'fill': False},
-            # Cyan triangle (solid)
-            {'center': (300, 400), 'size': 110, 'depth': 0.6, 'color': [255, 255, 0], 'shape': 'triangle', 'fill': True},
-            # Purple triangle (solid)
-            {'center': (600, 180), 'size': 95, 'depth': 0.8, 'color': [200, 0, 200], 'shape': 'triangle', 'fill': True},
+            {'position': (180, 120), 'depth': 0.2, 'color': [170, 200, 50], 'text': 'AFA'},
+            {'position': (450, 400), 'depth': 0.4, 'color': [50, 170, 220], 'text': 'Project'},
+            {'position': (210, 380), 'depth': 0.6, 'color': [0, 255, 255], 'text': 'Course'},
+            {'position': (450, 160), 'depth': 0.8, 'color': [20, 150, 255], 'text': 'Innovation'},
         ]
         
         for obj in objects_data:
@@ -59,57 +53,24 @@ class Scene3DVisualizer:
         return rgb_image, depth_image
     
     def draw_object(self, rgb_img, depth_img, obj):
-        """Draw individual objects on RGB and depth images"""
-        center = obj['center']
-        size = obj['size']
-        depth = obj['depth']
+        """Draw a word (text) on the image with color and apply depth."""
+        text = obj['text']
+        position = obj['position']
         color = obj['color']
-        shape = obj['shape']
-        fill = obj['fill']
-        
-        if shape == 'square':
-            self.draw_square(rgb_img, depth_img, center, size, depth, color, fill)
-        elif shape == 'triangle':
-            self.draw_triangle(rgb_img, depth_img, center, size, depth, color, fill)
-    
-    def draw_square(self, rgb_img, depth_img, center, size, depth, color, fill):
-        """Draw square on images"""
-        x, y = center
-        half_size = size // 2 # floor division for integer size
-        
-        if fill:
-            # Draw filled rgb
-            cv2.rectangle(rgb_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), color, -1) # -1 indicates filled
-            # Draw filled depth
-            cv2.rectangle(depth_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), depth, -1)
-        else:
-            # Draw hollow rgb
-            cv2.rectangle(rgb_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), color, 10)
-            # Draw hollow depth
-            cv2.rectangle(depth_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), depth, 10)
-    
-    def draw_triangle(self, rgb_img, depth_img, center, size, depth, color, fill):
-        """Draw triangle on images"""
-        x, y = center
-        height = int(size * 0.866)  # equilateral triangle height
-        
-        pts = np.array([
-            [x, y - height//2], # Top vertex
-            [x - size//2, y + height//2],   # Bottom left vertex
-            [x + size//2, y + height//2]    # Bottom right vertex
-        ], np.int32)
-        
-        if fill:
-            cv2.fillPoly(rgb_img, [pts], color)
-            cv2.fillPoly(depth_img, [pts], depth)
-        else:
-            cv2.polylines(rgb_img, [pts], True, color, 5)
-            cv2.polylines(depth_img, [pts], True, depth, 5)
+        depth = obj['depth']
 
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 2
+        thickness = 3
+
+        # Draw text on RGB image
+        cv2.putText(rgb_img, text, position, font, font_scale, color, thickness, cv2.LINE_AA)
+        
+        # Bounding box for depth image
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+        x, y = position
+        cv2.rectangle(depth_img, (x, y - text_height), (x + text_width, y), depth, -1)
+    
 def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.2), 
                                     reference_depth=1.0):
     """Apply rotation, translation, and depth-based scaling to the images"""
@@ -166,7 +127,7 @@ def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, tra
 
     return transformed_rgb, transformed_depth, rotation_matrix, z_translation, scale_factor
 
-def sift_matching(image1, image2, max_features=30):
+def sift_matching(image1, image2, max_features=100):
     """Perform SIFT feature matching between two images"""
     # Convert to grayscale for SIFT
     img1 = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
@@ -238,7 +199,7 @@ def sift_matching(image1, image2, max_features=30):
         x2 += w1
         
         # Draw a line between matching points (green color)
-        cv2.line(combined_img, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        cv2.line(combined_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
     
     # Display the combined image with keypoints and matches
     cv2.imshow('SIFT Matches', combined_img)
@@ -249,45 +210,33 @@ def sift_matching(image1, image2, max_features=30):
 
     return keypoints1, keypoints2, good_matches
 
-def extract_3d_points(keypoints, depth_img, camera_matrix):
+def extract_3d_points(keypoints, depth_img):
     """Extract 3D points from 2D keypoints using depth information"""
-    points_3d = []
-    valid_indices = []
+    points_3d = np.zeros((len(keypoints), 3)) # Initialize 3D points array with zeros
+    points_3d[:, :2] = keypoints    # Copy 2D keypoints to the first two columns of points_3d
     
-    fx, fy = camera_matrix[0, 0], camera_matrix[1, 1]
-    cx, cy = camera_matrix[0, 2], camera_matrix[1, 2]
+    for i, pt in enumerate(keypoints):
+        x, y = int(pt[0]), int(pt[1])
+        points_3d[i, 2] = depth_img[y, x]
     
-    for i, kp in enumerate(keypoints):
-        x, y = int(kp.pt[0]), int(kp.pt[1])
-        
-        if 0 <= x < depth_img.shape[1] and 0 <= y < depth_img.shape[0]:
-            depth = depth_img[y, x]
-            if depth > 0:
-                # Convert to 3D coordinates
-                z = depth
-                x_3d = (x - cx) * z / fx
-                y_3d = (y - cy) * z / fy
-                points_3d.append([x_3d, y_3d, z])
-                valid_indices.append(i)
-    
-    return np.array(points_3d), valid_indices
+    return points_3d
 
-def estimate_pose_svd(points_3d_src, points_3d_dst):
-    """Estimate pose using SVD (Kabsch algorithm)"""
-    if len(points_3d_src) < 3 or len(points_3d_dst) < 3:
+def estimate_3d_transform(src_3d, dst_3d):
+    """Estimate 3D transformation using SVD (Kabsch algorithm)"""
+    if len(src_3d) < 3 or len(dst_3d) < 3:
         return None, None
     
     # Center the point sets
-    centroid_src = np.mean(points_3d_src, axis=0)
-    centroid_dst = np.mean(points_3d_dst, axis=0)
+    src_centroid = np.mean(src_3d, axis=0)
+    dst_centroid = np.mean(dst_3d, axis=0)
     
-    points_src_centered = points_3d_src - centroid_src
-    points_dst_centered = points_3d_dst - centroid_dst
+    src_centered = src_3d - src_centroid
+    dst_centered = dst_3d - dst_centroid
     
     # Compute cross-covariance matrix
-    H = points_src_centered.T @ points_dst_centered
+    H = src_centered.T @ dst_centered
     
-    # SVD
+    # SVD (Singular Value Decomposition)
     U, S, Vt = np.linalg.svd(H)
     
     # Compute rotation matrix
@@ -295,165 +244,118 @@ def estimate_pose_svd(points_3d_src, points_3d_dst):
     
     # Ensure proper rotation (determinant = 1)
     if np.linalg.det(R_matrix) < 0:
+    # Checks if the computed rotation matrix R is a reflection instead of a proper rotation
+    # A proper rotation matrix should have det(R) = +1, not -1
         Vt[-1, :] *= -1
+        # Flips the sign of the last row of Vt, this corrects the reflection problem
         R_matrix = Vt.T @ U.T
+        # Recomputes the corrected rotation matrix
     
-    # Compute translation
-    t_vector = centroid_dst - R_matrix @ centroid_src
+    # Compute translation vector
+    t_vector = dst_centroid - R_matrix @ src_centroid
     
     return R_matrix, t_vector
 
-def create_camera_matrix(width, height, fov=60):
-    """Create a simple camera matrix"""
-    f = width / (2 * np.tan(np.radians(fov/2)))
-    camera_matrix = np.array([
-        [f, 0, width/2],
-        [0, f, height/2],
-        [0, 0, 1]
-    ])
-    return camera_matrix
+def visualize_3d_points(src_3d, dst_3d, estimated_dst_3d):
+    """Visualize the 3D points in a 3D coordinate system, with scaled depth"""
+    fig = plt.figure(figsize=(12, 9))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Scale Z-coordinate by 300
+    src_3d[:, 2] *= 300
+    dst_3d[:, 2] *= 300
+    estimated_dst_3d[:, 2] *= 300
 
-def apply_pose_to_scene(rgb_img, depth_img, R_matrix, t_vector, camera_matrix):
-    """Apply estimated pose transformation to create overlay"""
-    height, width = rgb_img.shape[:2]
+    # Plot source points in red
+    ax.scatter(src_3d[:, 0], src_3d[:, 1], src_3d[:, 2], 
+              c='red', marker='o', s=80, alpha=0.8, label='Source Points (src_3d)')
     
-    # Create 3D point cloud from depth image
-    fx, fy = camera_matrix[0, 0], camera_matrix[1, 1]
-    cx, cy = camera_matrix[0, 2], camera_matrix[1, 2]
+    # Plot destination points in green
+    ax.scatter(dst_3d[:, 0], dst_3d[:, 1], dst_3d[:, 2], 
+              c='green', marker='o', s=80, alpha=0.8, label='Destination Points (dst_3d)')
     
-    # Create meshgrid for all pixels
-    u, v = np.meshgrid(np.arange(width), np.arange(height))
+    # Plot estimated destination points in blue
+    ax.scatter(estimated_dst_3d[:, 0], estimated_dst_3d[:, 1], estimated_dst_3d[:, 2], 
+              c='blue', marker='o', s=80, alpha=0.8, label='Estimated Destination Points (estimated_dst_3d)')
     
-    # Get valid depth points
-    valid_mask = depth_img > 0
-    u_valid = u[valid_mask]
-    v_valid = v[valid_mask]
-    depth_valid = depth_img[valid_mask]
+    # # Draw lines connecting corresponding points for better visualization
+    # for i in range(len(src_3d)):
+    #     # Line from source to actual destination (red to green)
+    #     ax.plot([src_3d[i, 0], dst_3d[i, 0]], 
+    #             [src_3d[i, 1], dst_3d[i, 1]], 
+    #             [src_3d[i, 2], dst_3d[i, 2]], 
+    #             'k--', alpha=0.3, linewidth=1)
+        
+    #     # Line from actual destination to estimated destination (green to blue)
+    #     ax.plot([dst_3d[i, 0], estimated_dst_3d[i, 0]], 
+    #             [dst_3d[i, 1], estimated_dst_3d[i, 1]], 
+    #             [dst_3d[i, 2], estimated_dst_3d[i, 2]], 
+    #             'orange', alpha=0.6, linewidth=2)
     
-    # Convert to 3D
-    x_3d = (u_valid - cx) * depth_valid / fx
-    y_3d = (v_valid - cy) * depth_valid / fy
-    z_3d = depth_valid
+    # Set labels and title
+    ax.set_xlabel('X Coordinate', fontsize=12)
+    ax.set_ylabel('Y Coordinate', fontsize=12)
+    ax.set_zlabel('Z Coordinate (Depth)', fontsize=12)
+    ax.set_title('3D Point Transformation Visualization', fontsize=14, fontweight='bold')
     
-    points_3d = np.column_stack([x_3d, y_3d, z_3d])
+    # Add legend
+    ax.legend(loc='upper left', fontsize=10)
     
-    # Apply transformation
-    points_3d_transformed = (R_matrix @ points_3d.T).T + t_vector
+    # Add grid for better visualization
+    ax.grid(True, alpha=0.3)
     
-    # Project back to 2D
-    u_new = (points_3d_transformed[:, 0] * fx / points_3d_transformed[:, 2] + cx).astype(int)
-    v_new = (points_3d_transformed[:, 1] * fy / points_3d_transformed[:, 2] + cy).astype(int)
+    # Set equal aspect ratio for better visualization
+    max_range = np.array([src_3d.max()-src_3d.min(), 
+                         dst_3d.max()-dst_3d.min(), 
+                         estimated_dst_3d.max()-estimated_dst_3d.min()]).max() / 2.0
     
-    # Create transformed image
-    transformed_img = np.zeros_like(rgb_img)
+    mid_x = (src_3d[:, 0].max() + src_3d[:, 0].min()) / 2.0
+    mid_y = (src_3d[:, 1].max() + src_3d[:, 1].min()) / 2.0
+    mid_z = (src_3d[:, 2].max() + src_3d[:, 2].min()) / 2.0
     
-    # Map valid pixels
-    valid_proj = (u_new >= 0) & (u_new < width) & (v_new >= 0) & (v_new < height)
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
     
-    if np.any(valid_proj):
-        transformed_img[v_new[valid_proj], u_new[valid_proj]] = rgb_img[v_valid[valid_proj], u_valid[valid_proj]]
-    
-    return transformed_img
+    # Show the plot
+    plt.tight_layout()
+    plt.show()
 
-def create_3d_visualization(original_rgb, original_depth, transformed_rgb, transformed_depth, 
-                           kp1, kp2, matches, camera_matrix, R_estimated, t_estimated):
-    """Create interactive 3D visualization with SIFT matches and estimated overlay"""
-    from mpl_toolkits.mplot3d import Axes3D
+def apply_transformation_and_overlay(original_rgb, transformed_rgb, R, t, alpha=0.5):
+    """
+    Apply the estimated transformation to the original image and overlay it on the transformed image
+    """
+    height, width = original_rgb.shape[:2]
+    center_x, center_y = width // 2, height // 2
     
-    # Extract 3D points for matched keypoints
-    matched_kp1 = [kp1[m.queryIdx] for m in matches]
-    matched_kp2 = [kp2[m.trainIdx] for m in matches]
+    # Extract rotation angle from rotation matrix
+    rotation_angle_rad = np.arctan2(R[1, 0], R[0, 0])
+    rotation_angle_deg = np.degrees(rotation_angle_rad)
     
-    points_3d_original, valid_orig = extract_3d_points(matched_kp1, original_depth, camera_matrix)
-    points_3d_transformed, valid_trans = extract_3d_points(matched_kp2, transformed_depth, camera_matrix)
+    # Apply scaling based on Z translation
+    estimated_scale = 1.0 / (1.0 + t[2])
     
-    # Ensure we have corresponding points
-    min_points = min(len(points_3d_original), len(points_3d_transformed))
-    if min_points > 0:
-        points_3d_original = points_3d_original[:min_points]
-        points_3d_transformed = points_3d_transformed[:min_points]
-        
-        # Create estimated points using SVD transformation
-        if R_estimated is not None and t_estimated is not None:
-            points_3d_estimated = (R_estimated @ points_3d_original.T).T + t_estimated
-        else:
-            points_3d_estimated = points_3d_original.copy()
-        
-        # Create 3D plot
-        fig = plt.figure(figsize=(15, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # Plot original scene points (red)
-        if len(points_3d_original) > 0:
-            ax.scatter(points_3d_original[:, 0], points_3d_original[:, 1], points_3d_original[:, 2],
-                      c='red', s=100, alpha=0.8, label=f'Original SIFT Points ({len(points_3d_original)})')
-            
-            # Add coordinate labels for original points
-            for i, point in enumerate(points_3d_original[:10]):  # Show first 10 to avoid clutter
-                ax.text(point[0], point[1], point[2], 
-                       f'O{i}\n({point[0]:.2f},{point[1]:.2f},{point[2]:.2f})',
-                       fontsize=8, color='red')
-        
-        # Plot transformed scene points (blue)
-        if len(points_3d_transformed) > 0:
-            ax.scatter(points_3d_transformed[:, 0], points_3d_transformed[:, 1], points_3d_transformed[:, 2],
-                      c='blue', s=100, alpha=0.8, label=f'Transformed SIFT Points ({len(points_3d_transformed)})')
-            
-            # Add coordinate labels for transformed points
-            for i, point in enumerate(points_3d_transformed[:10]):  # Show first 10 to avoid clutter
-                ax.text(point[0], point[1], point[2], 
-                       f'T{i}\n({point[0]:.2f},{point[1]:.2f},{point[2]:.2f})',
-                       fontsize=8, color='blue')
-        
-        # Plot estimated points (light blue with transparency)
-        if len(points_3d_estimated) > 0:
-            ax.scatter(points_3d_estimated[:, 0], points_3d_estimated[:, 1], points_3d_estimated[:, 2],
-                      c='lightblue', s=80, alpha=0.4, label=f'SVD Estimated Points ({len(points_3d_estimated)})')
-            
-            # Add coordinate labels for estimated points
-            for i, point in enumerate(points_3d_estimated[:10]):  # Show first 10 to avoid clutter
-                ax.text(point[0], point[1], point[2], 
-                       f'E{i}\n({point[0]:.2f},{point[1]:.2f},{point[2]:.2f})',
-                       fontsize=8, color='lightblue')
-        
-        # Draw lines connecting corresponding points
-        if len(points_3d_original) > 0 and len(points_3d_transformed) > 0:
-            for i in range(min(len(points_3d_original), len(points_3d_transformed), 20)):  # Limit to 20 lines
-                # Original to transformed
-                ax.plot([points_3d_original[i, 0], points_3d_transformed[i, 0]],
-                       [points_3d_original[i, 1], points_3d_transformed[i, 1]],
-                       [points_3d_original[i, 2], points_3d_transformed[i, 2]],
-                       'g--', alpha=0.3, linewidth=1)
-                
-                # Original to estimated
-                if len(points_3d_estimated) > i:
-                    ax.plot([points_3d_original[i, 0], points_3d_estimated[i, 0]],
-                           [points_3d_original[i, 1], points_3d_estimated[i, 1]],
-                           [points_3d_original[i, 2], points_3d_estimated[i, 2]],
-                           'orange', alpha=0.5, linewidth=2)
-        
-        # Set labels and title
-        ax.set_xlabel('X Coordinate (m)')
-        ax.set_ylabel('Y Coordinate (m)')
-        ax.set_zlabel('Z Coordinate (m)')
-        ax.set_title('3D SIFT Feature Correspondences and SVD Estimation\n(Interactive - Click and drag to rotate)')
-        
-        # Add legend
-        ax.legend()
-        
-        # Set equal aspect ratio
-        max_range = 0.5  # Adjust based on your scene scale
-        ax.set_xlim([-max_range, max_range])
-        ax.set_ylim([-max_range, max_range])
-        ax.set_zlim([0, 1.5])
-        
-        # Add grid
-        ax.grid(True, alpha=0.3)
-        
-        return fig, ax, points_3d_original, points_3d_transformed, points_3d_estimated
-    else:
-        print("No valid 3D points found for visualization")
-        return None, None, None, None, None
+    # Step 1: Apply scaling
+    scale_matrix = cv2.getRotationMatrix2D((center_x, center_y), 0, estimated_scale)
+    scaled_original = cv2.warpAffine(original_rgb, scale_matrix, (width, height))
+    
+    # Step 2: Apply rotation and X-Y translation
+    rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), rotation_angle_deg, 1.0)
+    rotation_matrix[0, 2] += t[0]  # X translation
+    rotation_matrix[1, 2] += t[1]  # Y translation
+    
+    # Apply the transformation
+    transformed_original = cv2.warpAffine(scaled_original, rotation_matrix, (width, height))
+    
+    # Create overlay
+    overlay_result = cv2.addWeighted(transformed_rgb, 1.0 - alpha, transformed_original, alpha, 0)
+    
+    # Display overlay
+    cv2.imshow('Transformation Overlay', overlay_result)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    
+    return overlay_result
 
 def main():
     # Create scene
@@ -468,149 +370,28 @@ def main():
     
     print(f"\nApplied transformation: 25° rotation + (80, 60, 0.5) translation")
     
-    # SIFT matching
+    # SIFT matching wtih FLANN
     kp1, kp2, matches = sift_matching(original_rgb, transformed_rgb)
     
-    print(f"\nFound {len(matches)} good matches")
+    # Extract the corresponding keypoints of good matches
+    matched_kp1 = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 2)
+    matched_kp2 = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 2)
     
-    # Create camera matrix
-    camera_matrix = create_camera_matrix(visualizer.width, visualizer.height)
+    # Extract z coordinates from the depth images
+    src_3d = extract_3d_points(matched_kp1, original_depth)
+    dst_3d = extract_3d_points(matched_kp2, transformed_depth)
+
+    # Get the translation and rotation matrices for estimated 3D transformation
+    R, t = estimate_3d_transform(src_3d, dst_3d)
     
-    # Extract 3D points for matched keypoints
-    matched_kp1 = [kp1[m.queryIdx] for m in matches]
-    matched_kp2 = [kp2[m.trainIdx] for m in matches]
-    
-    points_3d_src, valid_src = extract_3d_points(matched_kp1, original_depth, camera_matrix)
-    points_3d_dst, valid_dst = extract_3d_points(matched_kp2, transformed_depth, camera_matrix)
-    
-    # Filter matches to only include those with valid 3D points
-    valid_matches = []
-    valid_3d_src = []
-    valid_3d_dst = []
-    
-    for i, (src_idx, dst_idx) in enumerate(zip(valid_src, valid_dst)):
-        if i < len(valid_dst) and src_idx < len(points_3d_src):
-            valid_matches.append(matches[src_idx])
-            valid_3d_src.append(points_3d_src[i])
-            if i < len(points_3d_dst):
-                valid_3d_dst.append(points_3d_dst[i])
-    
-    valid_3d_src = np.array(valid_3d_src)
-    valid_3d_dst = np.array(valid_3d_dst[:len(valid_3d_src)])  # Ensure same length
-    
-    print(f"Valid 3D matches: {len(valid_3d_src)}")
-    
-    if len(valid_3d_src) >= 3:
-        # Estimate pose using SVD
-        print("Estimating pose using SVD...")
-        R_estimated, t_estimated = estimate_pose_svd(valid_3d_src, valid_3d_dst)
-        
-        if R_estimated is not None:
-            print("Pose estimation successful!")
-            print(f"Rotation matrix:\n{R_estimated}")
-            print(f"Translation vector: {t_estimated}")
-            
-            # Create 3D visualization
-            fig_3d, ax_3d, points_orig, points_trans, points_est = create_3d_visualization(
-                original_rgb, original_depth, transformed_rgb, transformed_depth,
-                kp1, kp2, matches, camera_matrix, R_estimated, t_estimated
-            )
-            
-            # Apply estimated transformation to create overlay
-            overlay_img = apply_pose_to_scene(original_rgb, original_depth, 
-                                            R_estimated, t_estimated, camera_matrix)
-            
-            # Create comprehensive visualization
-            fig_main, axes = plt.subplots(3, 3, figsize=(20, 16))
-            
-            # Row 1: Original scene and depth
-            axes[0, 0].imshow(cv2.cvtColor(original_rgb, cv2.COLOR_BGR2RGB))
-            axes[0, 0].set_title('Original RGB Scene\n(with grid background)', fontsize=12)
-            axes[0, 0].axis('off')
-            
-            axes[0, 1].imshow(original_depth, cmap='gray')
-            axes[0, 1].set_title('Original Depth Map', fontsize=12)
-            axes[0, 1].axis('off')
-            
-            # Show transformed scene with scaling info
-            axes[0, 2].imshow(cv2.cvtColor(transformed_rgb, cv2.COLOR_BGR2RGB))
-            axes[0, 2].set_title(f'Transformed Scene\n(Scale: {scale_factor:.3f}, Z+{z_translation:.2f})', fontsize=12)
-            axes[0, 2].axis('off')
-            
-            # Row 2: SIFT matches and depth analysis
-            if len(matches) > 0:
-                match_img = cv2.drawMatches(gray_original, kp1, gray_transformed, kp2, 
-                                          matches[:20], None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-                axes[1, 0].imshow(match_img, cmap='gray')
-                axes[1, 0].set_title(f'SIFT Matches (showing 20/{len(matches)})', fontsize=12)
-            else:
-                axes[1, 0].text(0.5, 0.5, 'No matches found', ha='center', va='center', 
-                               transform=axes[1, 0].transAxes, fontsize=14)
-                axes[1, 0].set_title('No SIFT Matches', fontsize=12)
-            axes[1, 0].axis('off')
-            
-            # Show transformed depth
-            transformed_depth_vis = ((transformed_depth - transformed_depth.min()) / 
-                                   (transformed_depth.max() - transformed_depth.min() + 1e-6) * 255).astype(np.uint8)
-            axes[1, 1].imshow(transformed_depth_vis, cmap='gray')
-            axes[1, 1].set_title('Transformed Depth Map', fontsize=12)
-            axes[1, 1].axis('off')
-            
-            # Show depth difference
-            depth_diff = np.abs(transformed_depth - original_depth)
-            depth_diff_vis = ((depth_diff - depth_diff.min()) / 
-                            (depth_diff.max() - depth_diff.min() + 1e-6) * 255).astype(np.uint8)
-            axes[1, 2].imshow(depth_diff_vis, cmap='hot')
-            axes[1, 2].set_title('Depth Difference\n(Hot = More Change)', fontsize=12)
-            axes[1, 2].axis('off')
-            
-            # Row 3: SVD results and overlay comparison
-            axes[2, 0].imshow(cv2.cvtColor(overlay_img, cv2.COLOR_BGR2RGB))
-            axes[2, 0].set_title('SVD Pose Applied\nto Original Scene', fontsize=12)
-            axes[2, 0].axis('off')
-            
-            # Side-by-side comparison
-            axes[2, 1].imshow(cv2.cvtColor(transformed_rgb, cv2.COLOR_BGR2RGB))
-            axes[2, 1].set_title('Actual Transformed Scene', fontsize=12)
-            axes[2, 1].axis('off')
-            
-            # Create overlay comparison
-            alpha = 0.6
-            overlay_comparison = cv2.addWeighted(transformed_rgb, alpha, overlay_img, 1-alpha, 0)
-            axes[2, 2].imshow(cv2.cvtColor(overlay_comparison, cv2.COLOR_BGR2RGB))
-            axes[2, 2].set_title('Overlay Comparison\n(SVD vs Actual)', fontsize=12)
-            axes[2, 2].axis('off')
-            
-            plt.tight_layout()
-            plt.show()
-            
-            # Print detailed analysis
-            print(f"\n=== Detailed Analysis ===")
-            print(f"Original scene objects at various depths: 0.2 to 0.8")
-            print(f"Applied Z-translation: +{z_translation:.3f}m")
-            print(f"Depth-based scale factor: {scale_factor:.3f}")
-            print(f"This means objects appear {(1/scale_factor):.2f}x {'larger' if scale_factor < 1 else 'smaller'} due to depth change")
-            print(f"SIFT detected {len(kp1)} features in original, {len(kp2)} in transformed")
-            print(f"Good matches: {len(matches)}")
-            print(f"3D correspondences used for SVD: {len(valid_3d_src)}")
-            
-            if points_orig is not None and len(points_orig) > 0:
-                print(f"\n=== Sample 3D Coordinates ===")
-                print(f"Original SIFT Points (first 3):")
-                for i, point in enumerate(points_orig[:3]):
-                    print(f"  Point O{i}: X={point[0]:.3f}, Y={point[1]:.3f}, Z={point[2]:.3f}")
-                
-                print(f"\nTransformed SIFT Points (first 3):")
-                for i, point in enumerate(points_trans[:3]):
-                    print(f"  Point T{i}: X={point[0]:.3f}, Y={point[1]:.3f}, Z={point[2]:.3f}")
-                
-                print(f"\nSVD Estimated Points (first 3):")
-                for i, point in enumerate(points_est[:3]):
-                    print(f"  Point E{i}: X={point[0]:.3f}, Y={point[1]:.3f}, Z={point[2]:.3f}")
-        else:
-            print("Pose estimation failed - not enough valid points")
-    else:
-        print("Not enough valid 3D matches for pose estimation (need at least 3)")
+    # Implement the SVD-based estimated transformation
+    estimated_dst_3d = (R @ src_3d.T).T + t
+
+    # Visualize the 3D points in a coordinate system, with scaled depth
+    visualize_3d_points(src_3d, dst_3d, estimated_dst_3d)
+
+    # Apply transformation and overlay
+    overlay_result = apply_transformation_and_overlay(original_rgb, transformed_rgb, R, t, alpha=0.5)
 
 if __name__ == "__main__":
     main()
