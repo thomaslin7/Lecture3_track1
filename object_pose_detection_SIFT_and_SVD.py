@@ -34,33 +34,29 @@ class Scene3DVisualizer:
         
         # Object definitions with (x, y, size, depth, color, shape, fill)
         objects_data = [
-            # Blue square (solid)
-            {'center': (200, 150), 'size': 130, 'depth': 0.2, 'color': [255, 0, 0], 'shape': 'square', 'fill': True},
+            # Blue square (hollow)
+            {'center': (200, 150), 'size': 70, 'depth': 0.2, 'color': [220, 10, 20], 'shape': 'square', 'fill': False},
             # Pink square (hollow)
             {'center': (500, 450), 'size': 85, 'depth': 0.4, 'color': [255, 0, 255], 'shape': 'square', 'fill': False},
             # Cyan triangle (solid)
             {'center': (300, 400), 'size': 110, 'depth': 0.6, 'color': [255, 255, 0], 'shape': 'triangle', 'fill': True},
-            # Green triangle (hollow)
-            {'center': (600, 180), 'size': 65, 'depth': 0.8, 'color': [0, 255, 0], 'shape': 'triangle', 'fill': False},
+            # Purple triangle (solid)
+            {'center': (600, 180), 'size': 95, 'depth': 0.8, 'color': [200, 0, 200], 'shape': 'triangle', 'fill': True},
         ]
         
         for obj in objects_data:
             self.draw_object(rgb_image, depth_image, obj)
             self.objects.append(obj)
-        
-        # Normalize depth image to 0-255 for visualization
-        depth_vis = ((depth_image - depth_image.min()) / 
-                    (depth_image.max() - depth_image.min()) * 255).astype(np.uint8)
 
         # For debugging
-        cv2.imshow("RGB Image", rgb_image)
+        cv2.imshow("Original RGB Image", rgb_image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-        cv2.imshow("Depth Image", depth_vis)
+        cv2.imshow("Original Depth Image", depth_image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-        return rgb_image, depth_image, depth_vis
+        return rgb_image, depth_image
     
     def draw_object(self, rgb_img, depth_img, obj):
         """Draw individual objects on RGB and depth images"""
@@ -91,10 +87,10 @@ class Scene3DVisualizer:
         else:
             # Draw hollow rgb
             cv2.rectangle(rgb_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), color, 3)
+                         (x+half_size, y+half_size), color, 10)
             # Draw hollow depth
             cv2.rectangle(depth_img, (x-half_size, y-half_size), 
-                         (x+half_size, y+half_size), depth, 3)
+                         (x+half_size, y+half_size), depth, 10)
     
     def draw_triangle(self, rgb_img, depth_img, center, size, depth, color, fill):
         """Draw triangle on images"""
@@ -111,8 +107,8 @@ class Scene3DVisualizer:
             cv2.fillPoly(rgb_img, [pts], color)
             cv2.fillPoly(depth_img, [pts], depth)
         else:
-            cv2.polylines(rgb_img, [pts], True, color, 3)
-            cv2.polylines(depth_img, [pts], True, depth, 3)
+            cv2.polylines(rgb_img, [pts], True, color, 5)
+            cv2.polylines(depth_img, [pts], True, depth, 5)
 
 def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.2), 
                                     reference_depth=1.0):
@@ -130,16 +126,20 @@ def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, tra
     # Create transformation matrix with scaling
     center_x, center_y = width // 2, height // 2    # center of the image
     
+    # Z translation involes scaling the image and adding a constant depth offset to the orignal depth values
     # First apply scaling
     scale_matrix = cv2.getRotationMatrix2D((center_x, center_y), 0, scale_factor)   # 2D affine transformation matrix for rotation and scaling: center of image / rotation angle / scale factor
     scaled_rgb = cv2.warpAffine(rgb_img, scale_matrix, (width, height))
     scaled_depth = cv2.warpAffine(depth_img, scale_matrix, (width, height))
 
+    # Then adding a constant depth offset
+    scaled_depth += z_translation
+
     # For debugging
-    cv2.imshow("Scaled RGB image with depth", scaled_rgb)
+    cv2.imshow("Scaled RGB image (Z translation)", scaled_rgb)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    cv2.imshow("Scaled depth image with depth", scaled_depth)
+    cv2.imshow("Scaled depth image (Z translation)", scaled_depth)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     
@@ -148,26 +148,106 @@ def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, tra
     rotation_matrix[0, 2] += translation[0] # X translation
     rotation_matrix[1, 2] += translation[1] # Y translation
     
-    # Apply rotation and translation to scaled images
+    # Apply rotation and X-Y translation to scaled images
     transformed_rgb = cv2.warpAffine(scaled_rgb, rotation_matrix, (width, height))
     transformed_depth = cv2.warpAffine(scaled_depth, rotation_matrix, (width, height))
-    
-    # For debugging
-    cv2.imshow("Transformed RGB image with depth", transformed_rgb)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    cv2.imshow("Transformed depth image with depth", transformed_depth)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
-    # Apply Z translation to depth values
-    transformed_depth = np.where(transformed_depth > 0, transformed_depth + z_translation, 0)
-    
     # Add grid background to transformed image
     visualizer = Scene3DVisualizer()
     visualizer.draw_grid_background(transformed_rgb)
     
+    # For debugging
+    cv2.imshow("Transformed RGB image (rotation and X-Y translation)", transformed_rgb)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    cv2.imshow("Transformed depth image (rotation and X-Y translation)", transformed_depth)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
     return transformed_rgb, transformed_depth, rotation_matrix, z_translation, scale_factor
+
+def sift_matching(image1, image2, max_features=30):
+    """Perform SIFT feature matching between two images"""
+    # Convert to grayscale for SIFT
+    img1 = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+    img2 = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
+    
+    # Initialize SIFT detector with the requested number of features
+    sift = cv2.SIFT_create(nfeatures=max_features)
+    
+    # Find keypoints and descriptors
+    keypoints1, descriptors1 = sift.detectAndCompute(img1, None)
+    keypoints2, descriptors2 = sift.detectAndCompute(img2, None)
+    
+    if descriptors1 is None or descriptors2 is None:
+        return [], [], []
+    
+    # Match descriptors using FLANN matcher
+    FLANN_INDEX_KDTREE = 1
+    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+    search_params = dict(checks=50)
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+    
+    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+    
+    # Apply Lowe's ratio test
+    good_matches = []
+    for pair in matches:
+        if len(pair) == 2:
+            m, n = pair
+            if m.distance < 0.7 * n.distance:
+                good_matches.append(m)
+    
+    print(f"Number of good matches: {len(good_matches)}")
+        
+    # Create a blank image that can fit both images side by side
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+    
+    # Calculate the height of the combined image (maximum height of the two images)
+    max_height = max(h1, h2)
+    
+    # Create a blank image with width = width of both images combined and height = max height
+    combined_img = np.zeros((max_height, w1 + w2, 3), dtype=np.uint8)
+    
+    # Place the first image on the left side
+    combined_img[0:h1, 0:w1] = image1
+    
+    # Place the second image on the right side
+    combined_img[0:h2, w1:w1+w2] = image2
+    
+    # Draw circles only at keypoints involved in good matches
+    for match in good_matches:
+        # Get the coordinates of matching keypoints
+        x1, y1 = map(int, keypoints1[match.queryIdx].pt)
+        x2, y2 = map(int, keypoints2[match.trainIdx].pt)
+        
+        # Draw circle on the first image keypoint
+        cv2.circle(combined_img, (x1, y1), 10, (0, 0, 255), 3)
+        
+        # Draw circle on the second image keypoint (shift x by w1)
+        cv2.circle(combined_img, (x2 + w1, y2), 5, (0, 0, 255), 2)
+
+    # Draw lines between matching keypoints
+    for match in good_matches:  # only get keypoints that are good matches to draw lines
+        # Get the coordinates of matching keypoints
+        x1, y1 = map(int, keypoints1[match.queryIdx].pt)
+        x2, y2 = map(int, keypoints2[match.trainIdx].pt)
+        
+        # Adjust x2 coordinate to account for the offset in the combined image
+        x2 += w1
+        
+        # Draw a line between matching points (green color)
+        cv2.line(combined_img, (x1, y1), (x2, y2), (0, 255, 0), 3)
+    
+    # Display the combined image with keypoints and matches
+    cv2.imshow('SIFT Matches', combined_img)
+    
+    # Wait for a key press to close the window
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    return keypoints1, keypoints2, good_matches
 
 def extract_3d_points(keypoints, depth_img, camera_matrix):
     """Extract 3D points from 2D keypoints using depth information"""
@@ -191,36 +271,6 @@ def extract_3d_points(keypoints, depth_img, camera_matrix):
                 valid_indices.append(i)
     
     return np.array(points_3d), valid_indices
-
-def sift_matching(img1, img2):
-    """Perform SIFT feature matching between two images"""
-    # Initialize SIFT detector
-    sift = cv2.SIFT_create()
-    
-    # Find keypoints and descriptors
-    kp1, des1 = sift.detectAndCompute(img1, None)
-    kp2, des2 = sift.detectAndCompute(img2, None)
-    
-    if des1 is None or des2 is None:
-        return [], [], []
-    
-    # Match descriptors using FLANN matcher
-    FLANN_INDEX_KDTREE = 1
-    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)
-    flann = cv2.FlannBasedMatcher(index_params, search_params)
-    
-    matches = flann.knnMatch(des1, des2, k=2)
-    
-    # Apply Lowe's ratio test
-    good_matches = []
-    for pair in matches:
-        if len(pair) == 2:
-            m, n = pair
-            if m.distance < 0.7 * n.distance:
-                good_matches.append(m)
-    
-    return kp1, kp2, good_matches
 
 def estimate_pose_svd(points_3d_src, points_3d_dst):
     """Estimate pose using SVD (Kabsch algorithm)"""
@@ -408,7 +458,7 @@ def create_3d_visualization(original_rgb, original_depth, transformed_rgb, trans
 def main():
     # Create scene
     visualizer = Scene3DVisualizer()
-    original_rgb, original_depth, depth_vis = visualizer.create_scene()
+    original_rgb, original_depth = visualizer.create_scene()
     
     # Apply transformation with depth-based scaling
     reference_depth = 1.0  # Reference depth for scaling calculations
@@ -416,21 +466,12 @@ def main():
         original_rgb, original_depth, rotation_angle=25, translation=(80, 60, 0.5), reference_depth=reference_depth
     )
     
-    print(f"\nApplied transformation: 25° rotation + (80, 60, 0.5) translation (X, Y, Z)")
-    print(f"Depth-based scaling factor: {scale_factor:.3f}")
-    
-    # Convert to grayscale for SIFT
-    gray_original = cv2.cvtColor(original_rgb, cv2.COLOR_BGR2GRAY)
-    gray_transformed = cv2.cvtColor(transformed_rgb, cv2.COLOR_BGR2GRAY)
+    print(f"\nApplied transformation: 25° rotation + (80, 60, 0.5) translation")
     
     # SIFT matching
-    print("Performing SIFT feature matching...")
-    kp1, kp2, matches = sift_matching(gray_original, gray_transformed)
+    kp1, kp2, matches = sift_matching(original_rgb, transformed_rgb)
     
-    print(f"Found {len(matches)} good matches")
-    
-    if len(matches) < 10:
-        print("Warning: Few matches found. Results may be unreliable.")
+    print(f"\nFound {len(matches)} good matches")
     
     # Create camera matrix
     camera_matrix = create_camera_matrix(visualizer.width, visualizer.height)
@@ -487,7 +528,7 @@ def main():
             axes[0, 0].set_title('Original RGB Scene\n(with grid background)', fontsize=12)
             axes[0, 0].axis('off')
             
-            axes[0, 1].imshow(depth_vis, cmap='gray')
+            axes[0, 1].imshow(original_depth, cmap='gray')
             axes[0, 1].set_title('Original Depth Map', fontsize=12)
             axes[0, 1].axis('off')
             
