@@ -71,26 +71,47 @@ class Scene3DVisualizer:
         x, y = position
         cv2.rectangle(depth_img, (x, y - text_height), (x + text_width, y), depth, -1)
     
-def apply_transformation(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.3)):
-    """Apply rotation, translation with depth to the image"""
+def apply_transformation_with_scaling(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.2), 
+                                    reference_depth=1.0):
+    """Apply rotation, translation, and depth-based scaling to the images"""
     height, width = rgb_img.shape[:2]
     
-    # Get translation in z
+    # Calculate Z translation and scaling factor
     z_translation = translation[2]
-    # Get center of the image
-    center_x, center_y = width // 2, height // 2
-
-    # Z translation
-    depth_img += z_translation
+    new_reference_depth = reference_depth + z_translation
+    scale_factor = reference_depth / new_reference_depth  # Objects farther away appear smaller
     
-    # Apply rotation and X-Y translation
+    print(f"Scale factor based on depth change: {scale_factor:.3f}")
+    print(f"Reference depth: {reference_depth} -> New depth: {new_reference_depth}")
+    
+    # Create transformation matrix with scaling
+    center_x, center_y = width // 2, height // 2    # center of the image
+    
+    # Z translation involes scaling the image and adding a constant depth offset to the orignal depth values
+    # First apply scaling
+    scale_matrix = cv2.getRotationMatrix2D((center_x, center_y), 0, scale_factor)   # 2D affine transformation matrix for rotation and scaling: center of image / rotation angle / scale factor
+    scaled_rgb = cv2.warpAffine(rgb_img, scale_matrix, (width, height))
+    scaled_depth = cv2.warpAffine(depth_img, scale_matrix, (width, height))
+
+    # Then adding a constant depth offset
+    scaled_depth += z_translation
+
+    # For debugging
+    cv2.imshow("Scaled RGB image (Z translation)", scaled_rgb)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    cv2.imshow("Scaled depth image (Z translation)", scaled_depth)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    
+    # Then apply rotation and X-Y translation
     rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), rotation_angle, 1.0)
     rotation_matrix[0, 2] += translation[0] # X translation
     rotation_matrix[1, 2] += translation[1] # Y translation
     
     # Apply rotation and X-Y translation to scaled images
-    transformed_rgb = cv2.warpAffine(rgb_img, rotation_matrix, (width, height))
-    transformed_depth = cv2.warpAffine(depth_img, rotation_matrix, (width, height))
+    transformed_rgb = cv2.warpAffine(scaled_rgb, rotation_matrix, (width, height))
+    transformed_depth = cv2.warpAffine(scaled_depth, rotation_matrix, (width, height))
 
     # Add grid background to transformed image
     visualizer = Scene3DVisualizer()
@@ -104,7 +125,7 @@ def apply_transformation(rgb_img, depth_img, rotation_angle=30, translation=(100
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-    return transformed_rgb, transformed_depth
+    return transformed_rgb, transformed_depth, rotation_matrix, z_translation, scale_factor
 
 def sift_matching(image1, image2, max_features=100):
     """Perform SIFT feature matching between two images"""
@@ -163,7 +184,7 @@ def sift_matching(image1, image2, max_features=100):
         x2, y2 = map(int, keypoints2[match.trainIdx].pt)
         
         # Draw circle on the first image keypoint
-        cv2.circle(combined_img, (x1, y1), 5, (0, 0, 255), 2)
+        cv2.circle(combined_img, (x1, y1), 10, (0, 0, 255), 3)
         
         # Draw circle on the second image keypoint (shift x by w1)
         cv2.circle(combined_img, (x2 + w1, y2), 5, (0, 0, 255), 2)
@@ -235,33 +256,6 @@ def estimate_3d_transform(src_3d, dst_3d):
     
     return R_matrix, t_vector
 
-def show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.5):
-    """
-    Apply the estimated transformation to the original image and overlay it on the transformed image
-    """
-    
-    # Convert 3x3 rotation matrix to 2x2 (take top-left 2x2 part)
-    R_2d = R[:2, :2]
-    
-    # Convert 3D translation to 2D (take first 2 components)
-    t_2d = t[:2]
-    
-    # Create 2x3 transformation matrix for cv2.warpAffine
-    # Format: [[R11, R12, tx], [R21, R22, ty]]
-    transform_matrix = np.hstack([R_2d, t_2d.reshape(-1, 1)])
-    
-    # Apply transformation to original image
-    height, width = original_rgb.shape[:2]
-    estimated_rgb = cv2.warpAffine(original_rgb, transform_matrix, (width, height))
-    
-    # Create overlay
-    overlay_result = cv2.addWeighted(transformed_rgb, 1.0, estimated_rgb, alpha, 0)
-    
-    # Display overlay
-    cv2.imshow('Transformation Overlay', overlay_result)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
 def visualize_3d_points(src_3d, dst_3d, estimated_dst_3d):
     """Visualize the 3D points in a 3D coordinate system, with scaled depth"""
     fig = plt.figure(figsize=(12, 9))
@@ -327,14 +321,51 @@ def visualize_3d_points(src_3d, dst_3d, estimated_dst_3d):
     plt.tight_layout()
     plt.show()
 
+def apply_transformation_and_overlay(original_rgb, transformed_rgb, R, t, alpha=0.5):
+    """
+    Apply the estimated transformation to the original image and overlay it on the transformed image
+    """
+    height, width = original_rgb.shape[:2]
+    center_x, center_y = width // 2, height // 2
+    
+    # Extract rotation angle from rotation matrix
+    rotation_angle_rad = np.arctan2(R[1, 0], R[0, 0])
+    rotation_angle_deg = np.degrees(rotation_angle_rad)
+    
+    # Apply scaling based on Z translation
+    estimated_scale = 1.0 / (1.0 + t[2])
+    
+    # Step 1: Apply scaling
+    scale_matrix = cv2.getRotationMatrix2D((center_x, center_y), 0, estimated_scale)
+    scaled_original = cv2.warpAffine(original_rgb, scale_matrix, (width, height))
+    
+    # Step 2: Apply rotation and X-Y translation
+    rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), rotation_angle_deg, 1.0)
+    rotation_matrix[0, 2] += t[0]  # X translation
+    rotation_matrix[1, 2] += t[1]  # Y translation
+    
+    # Apply the transformation
+    transformed_original = cv2.warpAffine(scaled_original, rotation_matrix, (width, height))
+    
+    # Create overlay
+    overlay_result = cv2.addWeighted(transformed_rgb, 1.0 - alpha, transformed_original, alpha, 0)
+    
+    # Display overlay
+    cv2.imshow('Transformation Overlay', overlay_result)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    
+    return overlay_result
+
 def main():
     # Create scene
     visualizer = Scene3DVisualizer()
     original_rgb, original_depth = visualizer.create_scene()
     
-    # Apply transformation with depth
-    transformed_rgb, transformed_depth = apply_transformation(
-        original_rgb, original_depth, rotation_angle=25, translation=(80, 60, 0.5)
+    # Apply transformation with depth-based scaling
+    reference_depth = 1.0  # Reference depth for scaling calculations
+    transformed_rgb, transformed_depth, transform_matrix, z_translation, scale_factor = apply_transformation_with_scaling(
+        original_rgb, original_depth, rotation_angle=25, translation=(80, 60, 0.5), reference_depth=reference_depth
     )
     
     print(f"\nApplied transformation: 25° rotation + (80, 60, 0.5) translation")
@@ -356,11 +387,11 @@ def main():
     # Implement the SVD-based estimated transformation
     estimated_dst_3d = (R @ src_3d.T).T + t
 
-    # Apply estimated transformation to the original RGB image
-    show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.3)
-
     # Visualize the 3D points in a coordinate system, with scaled depth
     visualize_3d_points(src_3d, dst_3d, estimated_dst_3d)
+
+    # Apply transformation and overlay
+    overlay_result = apply_transformation_and_overlay(original_rgb, transformed_rgb, R, t, alpha=0.5)
 
 if __name__ == "__main__":
     main()
