@@ -71,26 +71,45 @@ class Scene3DVisualizer:
         x, y = position
         cv2.rectangle(depth_img, (x, y - text_height), (x + text_width, y), depth, -1)
     
-def apply_transformation(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.3)):
+def apply_transformation(rgb_img, depth_img, rotation_angle=30, translation=(100, 50, 0.3), reference_depth=1.0):
     """Apply rotation, translation with depth to the image"""
     height, width = rgb_img.shape[:2]
 
-    # Get translation in z
+    # Calculate Z translation and scaling factor
     z_translation = translation[2]
-    # Get center of the image
-    center_x, center_y = width // 2, height // 2
+    new_reference_depth = reference_depth + z_translation
+    scale_factor = reference_depth / new_reference_depth  # Objects farther away appear smaller
 
-    # Z translation
+    print(f"Scale factor based on depth change: {scale_factor:.3f}")
+    print(f"Reference depth: {reference_depth} -> New depth: {new_reference_depth}")
+    
+    center_x, center_y = width // 2, height // 2    # center of the image
+    
+    # Z translation involes adding a constant depth offset to the orignal depth values and scaling the image
+    # First add a constant depth offset to the depth image
     depth_img += z_translation
+    
+    # Then apply scaling
+    scale_matrix = cv2.getRotationMatrix2D((center_x, center_y), 0, scale_factor)   # 2D affine transformation matrix for rotation and scaling: center of image / rotation angle / scale factor
+    scaled_rgb = cv2.warpAffine(rgb_img, scale_matrix, (width, height))
+    scaled_depth = cv2.warpAffine(depth_img, scale_matrix, (width, height))
+
+    # For debugging
+    cv2.imshow("Scaled RGB image (Z translation)", scaled_rgb)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    cv2.imshow("Scaled depth image (Z translation)", scaled_depth)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     
     # Apply rotation and X-Y translation
     rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), rotation_angle, 1.0)
     rotation_matrix[0, 2] += translation[0] # X translation
     rotation_matrix[1, 2] += translation[1] # Y translation
     
-    # Apply rotation and X-Y translation to scaled images
-    transformed_rgb = cv2.warpAffine(rgb_img, rotation_matrix, (width, height))
-    transformed_depth = cv2.warpAffine(depth_img, rotation_matrix, (width, height))
+    # Implement rotation and X-Y translation to scaled images
+    transformed_rgb = cv2.warpAffine(scaled_rgb, rotation_matrix, (width, height))
+    transformed_depth = cv2.warpAffine(scaled_depth, rotation_matrix, (width, height))
 
     # Add grid background to transformed image
     visualizer = Scene3DVisualizer()
@@ -309,11 +328,12 @@ def main():
     original_rgb, original_depth = visualizer.create_scene()
 
     # Apply transformation with depth
+    translation_3d = (80, 60, 0.7)  # X, Y, Z translation
     transformed_rgb, transformed_depth = apply_transformation(
-        original_rgb, original_depth, rotation_angle=25, translation=(80, 60, 0.5)
+        original_rgb, original_depth, rotation_angle=25, translation=translation_3d, reference_depth=1.0
     )
     
-    print(f"\nApplied transformation: 25° rotation + (80, 60, 0.5) translation")
+    print(f"\nApplied transformation: 25° rotation + {translation_3d} translation")
     
     # SIFT matching wtih FLANN
     kp1, kp2, matches = sift_matching(original_rgb, transformed_rgb)
@@ -327,12 +347,13 @@ def main():
     dst_2d = matched_kp2
     
     # Define camera intrinsic parameters
-    focal_length = 600  # Arbitrary focal length in pixels
+    focal_length_x = 800  # Arbitrary focal length in pixels
+    focal_length_y = 600
     height, width = original_rgb.shape[:2]
     center = (width//2, height//2)  # Center of the scene image
     camera_matrix = np.array([
-        [focal_length, 0, center[0]],
-        [0, focal_length, center[1]],
+        [focal_length_x, 0, center[0]],
+        [0, focal_length_y, center[1]],
         [0, 0, 1]
     ], dtype=np.float32)
 
