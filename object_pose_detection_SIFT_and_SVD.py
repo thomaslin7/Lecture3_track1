@@ -267,7 +267,7 @@ def visualize_3d_points(src_3d, dst_3d, estimated_dst_3d):
     fig = plt.figure(figsize=(12, 9))
     ax = fig.add_subplot(111, projection='3d')
     
-    # Scale Z-coordinate by 300
+    # Scale Z-coordinate by 300 (for visualization purposes only)
     src_3d[:, 2] *= 300
     dst_3d[:, 2] *= 300
     estimated_dst_3d[:, 2] *= 300
@@ -352,12 +352,12 @@ def main():
 
     # Get the translation and rotation matrices for estimated 3D transformation
     R, t = estimate_3d_transform(src_3d, dst_3d)
-    
-    # Implement the SVD-based estimated transformation
-    estimated_dst_3d = (R @ src_3d.T).T + t
 
     # Apply estimated transformation to the original RGB image
     show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.3)
+
+    # Implement the SVD-based estimated transformation
+    estimated_dst_3d = (R @ src_3d.T).T + t
 
     # Visualize the 3D points in a coordinate system, with scaled depth
     visualize_3d_points(src_3d, dst_3d, estimated_dst_3d)

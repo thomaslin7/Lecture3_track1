@@ -347,13 +347,12 @@ def main():
     dst_2d = matched_kp2
     
     # Define camera intrinsic parameters
-    focal_length_x = 800  # Arbitrary focal length in pixels
-    focal_length_y = 600
+    focal_length = 600  # Arbitrary focal length in pixels
     height, width = original_rgb.shape[:2]
     center = (width//2, height//2)  # Center of the scene image
     camera_matrix = np.array([
-        [focal_length_x, 0, center[0]],
-        [0, focal_length_y, center[1]],
+        [focal_length, 0, center[0]],
+        [0, focal_length, center[1]],
         [0, 0, 1]
     ], dtype=np.float32)
 
@@ -371,11 +370,14 @@ def main():
     # Convert rvec to 3x3 rotation matrix R
     R, _ = cv2.Rodrigues(rvec)
 
+    # Convert t to a 3D translation vector
+    t = t.reshape(-1)
+
     # Apply estimated transformation to the original RGB image
     show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.3)
 
     # Implement the SVD-based estimated transformation
-    estimated_dst_3d = (R @ src_3d.T).T + t.reshape(-1)
+    estimated_dst_3d = (R @ src_3d.T).T + t
 
     # Visualize the 3D points in a coordinate system, with scaled depth
     visualize_3d_points(src_3d, estimated_dst_3d)
