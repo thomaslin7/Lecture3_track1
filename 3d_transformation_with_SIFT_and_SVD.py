@@ -235,11 +235,11 @@ def estimate_3d_transform(src_3d, dst_3d):
     
     return R_matrix, t_vector
 
-def show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.5):
+def show_estimated_transformation(original_rgb, original_depth, transformed_rgb, R, t, alpha=0.5):
     """
     Apply the estimated transformation to the original image and overlay it on the transformed image
     """
-    
+
     # Convert 3x3 rotation matrix to 2x2 (take top-left 2x2 part)
     R_2d = R[:2, :2]
     
@@ -354,7 +354,7 @@ def main():
     R, t = estimate_3d_transform(src_3d, dst_3d)
 
     # Apply estimated transformation to the original RGB image
-    show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.3)
+    show_estimated_transformation(original_rgb, original_depth, transformed_rgb, R, t, alpha=0.3)
 
     # Implement the SVD-based estimated transformation
     estimated_dst_3d = (R @ src_3d.T).T + t
