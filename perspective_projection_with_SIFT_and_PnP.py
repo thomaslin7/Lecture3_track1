@@ -254,30 +254,67 @@ def estimate_3d_transform(src_3d, dst_3d):
     
     return R_matrix, t_vector
 
-def show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.5):
+def show_estimated_transformation(original_rgb, original_depth, transformed_rgb, R, t, camera_matrix, alpha=0.6):
     """
     Apply the estimated transformation to the original image and overlay it on the transformed image
     """
     
-    # Convert 3x3 rotation matrix to 2x2 (take top-left 2x2 part)
-    R_2d = R[:2, :2]
+    height, width = original_rgb.shape[:2]  # Get dimensions of the original image
     
-    # Convert 3D translation to 2D (take first 2 components)
-    t_2d = t[:2]
+    # Create meshgrid of pixel coordinates
+    x_coords, y_coords = np.meshgrid(np.arange(width), np.arange(height))
     
-    # Create 2x3 transformation matrix for cv2.warpAffine
-    # Format: [[R11, R12, tx], [R21, R22, ty]]
-    transform_matrix = np.hstack([R_2d, t_2d.reshape(-1, 1)])
+    # Flatten coordinates and stack them to create 2D points
+    x_flat = x_coords.flatten()
+    y_flat = y_coords.flatten()
+    points_2d = np.vstack([x_flat, y_flat]).T
     
-    # Apply transformation to original image
-    height, width = original_rgb.shape[:2]
-    estimated_rgb = cv2.warpAffine(original_rgb, transform_matrix, (width, height))
+    # Extract 3D points (z coordinate) using original_depth image
+    points_3d = extract_3d_points(points_2d, original_depth)
+    
+    # Apply rotation and translation: R * points + t
+    transformed_points = (R @ points_3d.T).T + t
+    
+    # Perspective projection using camera matrix
+    # Convert to homogeneous coordinates and project
+    homogeneous_coords = transformed_points.T  # Shape: (3, N)
+    
+    # Apply camera matrix multiplication
+    projected_coords = camera_matrix @ homogeneous_coords  # Shape: (3, N)
+    
+    # Perform perspective division (divide x and y coordinates by z coordinate)
+    # Handle division by zero by setting small z values to a minimum threshold
+    z_coords = projected_coords[2, :]   # Extract z coordinates
+    z_coords = np.where(z_coords < 1e-6, 1e-6, z_coords)  # Avoid division by zero
+    
+    # Get 2D projected coordinates
+    new_x = (projected_coords[0, :] / z_coords).astype(np.int32)
+    new_y = (projected_coords[1, :] / z_coords).astype(np.int32)
+    
+    # Reshape back to image dimensions
+    map_x_int = new_x.reshape(height, width)
+    map_y_int = new_y.reshape(height, width)
+    
+    # Create estimated_transform_rgb (same size as original)
+    estimated_transform_rgb = np.zeros_like(original_rgb)
+    
+    # Apply forward mapping with bounds checking
+    for j in range(height):  # j for rows (y-coordinate)
+        for i in range(width):  # i for columns (x-coordinate)
+            # Get new coordinates
+            new_x_coord = map_x_int[j, i]
+            new_y_coord = map_y_int[j, i]
+            
+            # Check if new coordinates are within bounds
+            if 0 <= new_x_coord < width and 0 <= new_y_coord < height:
+                # Copy pixel from original position (j, i) to new position (new_y_coord, new_x_coord)
+                estimated_transform_rgb[new_y_coord, new_x_coord] = original_rgb[j, i]
     
     # Create overlay
-    overlay_result = cv2.addWeighted(transformed_rgb, 1.0, estimated_rgb, alpha, 0)
+    overlay_result = cv2.addWeighted(transformed_rgb, 1.0, estimated_transform_rgb, alpha, 0)
     
     # Display overlay
-    cv2.imshow('Transformation Overlay', overlay_result)
+    cv2.imshow('Overlay Result', overlay_result)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
@@ -374,7 +411,7 @@ def main():
     t = t.reshape(-1)
 
     # Apply estimated transformation to the original RGB image
-    show_estimated_transformation(original_rgb, transformed_rgb, R, t, alpha=0.3)
+    show_estimated_transformation(original_rgb, original_depth, transformed_rgb, R, t, camera_matrix, alpha=0.6)
 
     # Implement the SVD-based estimated transformation
     estimated_dst_3d = (R @ src_3d.T).T + t
